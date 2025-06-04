@@ -1,7 +1,18 @@
 import telebot
 import os
+import json
 from dotenv import load_dotenv
-from pymongo import MongoClient
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from flask import Flask
+import threading
+
+# Flask সার্ভার তৈরি
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Telegram Bot is running!"
 
 # এনভায়রনমেন্ট ভ্যারিয়েবল লোড
 load_dotenv()
@@ -13,26 +24,52 @@ MIN_WITHDRAW_AMOUNT = 50
 MIN_RECHARGE_AMOUNT = 20
 PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
 GROUP_LINK = os.getenv('GROUP_LINK')
-MONGO_URI = os.getenv('MONGO_URI')
+GOOGLE_CREDENTIALS = os.getenv('GOOGLE_CREDENTIALS')
 
-# MongoDB সংযোগ
-client = MongoClient(MONGO_URI)
-db = client['telegram_bot']
-collection = db['users']
+# Google Sheets সেটআপ
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_dict = json.loads(GOOGLE_CREDENTIALS)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+sheet = client.open("TelegramBotUsers").sheet1
 
 bot = telebot.TeleBot(TOKEN)
 
 def load_data():
     try:
-        return {doc['_id']: doc for doc in collection.find()}
+        records = sheet.get_all_records()
+        data = {}
+        for record in records:
+            user_id = str(record['user_id'])
+            data[user_id] = {
+                'username': record['username'],
+                'ref': record['ref'] if record['ref'] else None,
+                'activated': record['activated'] == 'True',
+                'balance': record['balance'],
+                'withdraw_history': json.loads(record['withdraw_history']) if record['withdraw_history'] else [],
+                'recharge_history': json.loads(record['recharge_history']) if record['recharge_history'] else []
+            }
+        return data
     except Exception as e:
         print(f"ডেটা লোড করতে ত্রুটি: {e}")
         return {}
 
 def save_data(data):
     try:
+        sheet.clear()
+        headers = ['user_id', 'username', 'ref', 'activated', 'balance', 'withdraw_history', 'recharge_history']
+        sheet.append_row(headers)
         for user_id, user_data in data.items():
-            collection.update_one({'_id': user_id}, {'$set': user_data}, upsert=True)
+            row = [
+                user_id,
+                user_data['username'],
+                user_data.get('ref', ''),
+                str(user_data['activated']),
+                user_data['balance'],
+                json.dumps(user_data['withdraw_history']),
+                json.dumps(user_data['recharge_history'])
+            ]
+            sheet.append_row(row)
     except Exception as e:
         print(f"ডেটা সেভ করতে ত্রুটি: {e}")
 
@@ -97,163 +134,163 @@ def handle_start(message):
         )
         bot.send_message(message.chat.id, welcome_message, reply_markup=markup)
 
-@bot.message_handler(content_types=['photo'])
-def handle_screenshot(message):
-    user_id = str(message.chat.id)
-    if is_user_activated(user_id):
-        bot.reply_to(message, "✅ আপনার একাউন্ট ইতিমধ্যে এক্টিভ।")
-        return
-    try:
-        bot.forward_message(ADMIN_CHAT_ID, message.chat.id, message.message_id)
-        bot.reply_to(message, "✅ স্ক্রিনশট পাঠানো হয়েছে। অ্যাডমিন শীঘ্রই যাচাই করবে।")
-    except Exception as e:
-        bot.reply_to(message, "⚠️ স্ক্রিনশট পাঠাতে ত্রুটি। আবার চেষ্টা করুন।")
-        print(f"স্ক্রিনশট ফরোয়ার্ডে ত্রুটি: {e}")
-
-@bot.message_handler(commands=['approve'])
-def approve_user(message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        bot.reply_to(message, "⚠️ শুধু অ্যাডমিন এই কমান্ড ব্যবহার করতে পারেন।")
-        return
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "⚠️ ব্যবহার: /approve <chat_id>")
-        return
-    target_id = args[1]
-    data = load_data()
-    if target_id not in data:
-        bot.reply_to(message, "❌ ইউজার পাওয়া যায়নি।")
-        return
-    activate_user(target_id)
-    try:
-        bot.send_message(int(target_id), "✅ আপনার একাউন্ট অ্যাডমিন দ্বারা এক্টিভ করা হয়েছে। এখন আপনি রেফার করতে পারবেন।", reply_markup=main_menu_keyboard())
-        bot.reply_to(message, f"✅ {target_id} একাউন্ট এক্টিভেট করা হয়েছে।")
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ {target_id}-কে মেসেজ পাঠাতে ত্রুটি: {e}")
-
-@bot.message_handler(commands=['remove'])
-def remove_user(message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        bot.reply_to(message, "⚠️ শুধু অ্যাডমিন এই কমান্ড ব্যবহার করতে পারেন।")
-        return
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "⚠️ ব্যবহার: /remove <chat_id>")
-        return
-    target_id = args[1]
-    data = load_data()
-    if target_id in data:
-        collection.delete_one({'_id': target_id})
-        bot.reply_to(message, f"✅ ইউজার {target_id} ডিলিট করা হয়েছে।")
-    else:
-        bot.reply_to(message, "❌ ইউজার পাওয়া যায়নি।")
-
-@bot.message_handler(func=lambda message: True)
-def main_handler(message):
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
     user_id = str(message.chat.id)
     text = message.text
 
     data = load_data()
-    if user_id not in data:
-        bot.send_message(message.chat.id, "অনুগ্রহ করে /start দিয়ে শুরু করুন।")
+    if user_id in data:
+        if text == 'আমার প্রোফাইল':
+            user_data = data[user_id]
+            profile_text = (
+                f"User: @{user_data.get('username', 'No name')}\n"
+                f"Balance: {user_data.get('balance', 0)} BDT\n"
+                f"Referer: @{data.get(user_data.get('ref', ''), {}).get('username', 'None')}\n"
+                f"Activated: {'Yes' if user_data.get('activated') else 'No'}"
+            )
+            bot.send_message(message.chat.id, profile_text, reply_markup=main_menu_keyboard())
+
+        elif text == 'রেফার':
+            try:
+                bot_username = bot.get_me().username
+                ref_link = f"https://t.me/{bot_username}?start={user_id}"
+                bot.send_message(message.chat.id, f"Your referral link: {ref_link}", reply_markup=main_menu_keyboard.hex())
+            except Exception as e:
+                bot.send_message(message.chat.id, "Error generating referral link.", reply_markup=main_menu_keyboard())
+                print(f"Referral link error: {e}")
+
+        elif text == 'উইথড্র':
+            if not is_user_activated(user_id):
+                bot.send_message(message.chat.id, "❌ Your account is not activated. Please activate first.")
+                return
+            bot.send_message(message.chat.id, f"Balance: {data[user_id]['balance']} BDT.\nMinimum withdraw: {MIN_WITHDRAW_AMOUNT} BDT.\nUse /withdraw_amount <amount>", reply_markup=main_menu_keyboard())
+
+        elif text.startswith('/withdraw_amount'):
+            if not is_user_activated(user_id):
+                bot.send_message(message.chat.id, "❌ Not activated.")
+                return
+            parts = text.split()
+            if len(parts) != 2 or not parts[1].isdigit():
+                bot.send_message(message.chat.id, "⚠️ Format: /withdraw_amount <amount>")
+                return
+            amount = int(parts[1])
+            if amount < MIN_WITHDRAW_AMOUNT:
+                bot.send_message(message.chat.id, f"⚠️ Minimum: {MIN_WITHDRAW_AMOUNT} BDT.")
+                return
+            if data[user_id]['balance'] < amount:
+                bot.send_message(message.chat.id, "⚠️ Insufficient balance.")
+                return
+            data[user_id]['balance'] -= amount
+            data[user_id]['withdraw_history'].append(amount)
+            save_data(data)
+            try:
+                bot.send_message(ADMIN_CHAT_ID, f"New withdraw request: User {user_id}, Amount: {amount} BDT")
+                bot.send_message(message.chat.id, f"✅ Withdraw request for {amount} sent to admin.")
+            except Exception as e:
+                print(f"Withdraw error: {e}")
+
+        elif text == 'রিচার্জ':
+            if not is_user_activated(user_id):
+                bot.send_message(message.chat.id, "❌ Not activated.")
+                return
+            bot.send_message(message.chat.id, f"Minimum recharge: {MIN_RECHARGE_AMOUNT} BDT.\nPayment number: {PAYMENT_NUMBER}\nUse /recharge_amount <amount>", reply_markup=main_menu_keyboard())
+
+        elif text.startswith('/recharge_amount'):
+            if not is_user_activated(user_id):
+                bot.send_message(message.chat.id, "❌ Not activated.")
+                return
+            parts = text.split()
+            if len(parts) != 2 or not parts[1].isdigit():
+                bot.send_message(message.chat.id, "⚠️ Format: /recharge_amount <amount>")
+                return
+            amount = int(parts[1])
+            if amount < MIN_RECHARGE_AMOUNT:
+                bot.send_message(message.chat.id, f"⚠️ Minimum: {MIN_RECHARGE_AMOUNT} BDT.")
+                return
+            data[user_id]['recharge_history'].append(amount)
+            save_data(data)
+            try:
+                bot.send_message(ADMIN_CHAT_ID, f"New recharge: User {user_id}, Amount: {amount} BDT")
+                bot.send_message(message.chat.id, f"✅ Recharge request for {amount} sent. Send screenshot.")
+            except Exception as e:
+                print(f"Recharge error: {e}")
+
+        elif text == 'ট্রানজ্যাকশন হিস্ট্রি':
+            user_data = data[user_id]
+            withdraws = user_data.get('withdraw_history', [])
+            recharges = user_data.get('recharge_history', [])
+            history_text = "📜 Transaction History:\n\n"
+            history_text += "Withdraws:\n" + "\n".join([f"- {amt} BDT" for amt in withdraws]) + "\n\n" if withdraws else "Withdraws: None\n\n"
+            history_text += "Recharges:\n" + "\n".join([f"- {amt} BDT" for amt in recharges]) if recharges else "Recharges: None"
+            bot.send_message(message.chat.id, history_text, reply_markup=main_menu_keyboard())
+
+        elif text == 'যোগাযোগ':
+            bot.send_message(message.chat.id, "Contact: @setusername00_00_is_available", reply_markup=main_menu_keyboard())
+
+        else:
+            bot.send_message(message.chat.id, "⚠️ Invalid option. Choose from buttons.", reply_to=main_menu_keyboard())
+
+@bot.message_handler(content_types=['photo'])
+def handle_screenshot(message):
+    user_id = str(message.chat.id)
+    if is_user_activated(user_id):
+        bot.reply_to(message, "✅ Already activated.")
         return
+    try:
+        bot.forward_message(ADMIN_CHAT_ID, message.chat.id, message.message_id)
+        bot.reply_to(message, "✅ Screenshot forwarded to admin.")
+    except Exception as e:
+        bot.reply_to(message, "⚠️ Error forwarding screenshot.")
+        print(f"Screenshot error: {e}")
 
-    if text == 'আমার প্রোফাইল':
-        user = data[user_id]
-        profile_text = (
-            f"👤 ইউজার: @{user.get('username', 'নাম নেই')}\n"
-            f"💰 ব্যালেন্স: {user.get('balance', 0)} টাকা\n"
-            f"🔗 রেফারার: @{data.get(str(user.get('ref')), {}).get('username', 'না আছে')}\n"
-            f"🔓 এক্টিভেটেড: {'হ্যাঁ' if user.get('activated') else 'না'}"
-        )
-        bot.send_message(message.chat.id, profile_text, reply_markup=main_menu_keyboard())
-
-    elif text == 'রেফার':
-        try:
-            bot_username = bot.get_me().username
-            ref_link = f"https://t.me/{bot_username}?start={user_id}"
-            bot.send_message(message.chat.id, f"আপনার রেফার লিংক:\n{ref_link}", reply_markup=main_menu_keyboard())
+@bot.message_handler(commands=['approve'])
+def approve_user(message):
+    if message.chat.id != ADMIN_CHAT_ID:
+        bot.reply_to(message, "Only admin can use this.")
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        bot.reply_to(message, "⚠️ Use: /approve <chat_id>")
+        return
+    target_id = args[1]
+    data = load_data()
+    if target_id not in data:
+        bot.reply_to(message, "❌ User not found.")
+        return
+    activate_user(target_id)
+    try:
+        bot.send_message(int(target_id), "✅ Account activated by admin.", reply_to=message_menu_keyboard())
+        bot.reply_to(message, f"✅ {target_id} activated.")
         except Exception as e:
-            bot.send_message(message.chat.id, "⚠️ রেফার লিংক তৈরি করতে ত্রুটি।", reply_markup=main_menu_keyboard())
-            print(f"রেফার লিংক ত্রুটি: {e}")
+            print(f"Approve error: {e}")
 
-    elif text == 'উইথড্র':
-        if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
-            return
-        bot.send_message(message.chat.id, f"আপনার বর্তমান ব্যালেন্স: {data[user_id]['balance']} টাকা।\n"
-                                          f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
-                                          "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
-
-    elif text.startswith('/withdraw_amount'):
-        if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
-            return
-        parts = text.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            bot.send_message(message.chat.id, "⚠️ সঠিক ফরম্যাট: /withdraw_amount <টাকা>")
-            return
-        amount = int(parts[1])
-        if amount < MIN_WITHDRAW_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন উইথড্র {MIN_WITHDRAW_AMOUNT} টাকা।")
-            return
-        if data[user_id]['balance'] < amount:
-            bot.send_message(message.chat.id, "⚠️ আপনার ব্যালেন্স পর্যাপ্ত নয়।")
-            return
-        data[user_id]['balance'] -= amount
-        data[user_id]['withdraw_history'].append(amount)
+@bot.message_handler(commands=['delete'])
+def delete_user(message):
+    if message.chat.id != ADMIN_CHAT_ID:
+        bot.reply_to(message, "Only admin can use this.")
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        bot.reply_to(message, "⚠️ Use: /delete <chat_id>")
+        return
+    target_id = args[1]
+    data = load_data()
+    if target_id in data:
+        del data[target_id]
         save_data(data)
-        try:
-            bot.send_message(ADMIN_CHAT_ID, f"নতুন উইথড্র রিকোয়েস্ট: ইউজার {user_id}, পরিমাণ: {amount} টাকা")
-            bot.send_message(message.chat.id, f"✅ আপনি {amount} টাকা উইথড্র রিকোয়েস্ট করেছেন। অ্যাডমিন যোগাযোগ করবে।")
-        except Exception as e:
-            bot.send_message(message.chat.id, "⚠️ উইথড্র রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
-            print(f"উইথড্র ত্রুটি: {e}")
-
-    elif text == 'রিচার্জ':
-        if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
-            return
-        bot.send_message(message.chat.id, f"রিচার্জ করতে /recharge_amount <টাকা> লিখুন।\n"
-                                          f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
-                                          f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
-
-    elif text.startswith('/recharge_amount'):
-        if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
-            return
-        parts = text.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            bot.send_message(message.chat.id, "⚠️ সঠিক ফরম্যাট: /recharge_amount <টাকা>")
-            return
-        amount = int(parts[1])
-        if amount < MIN_RECHARGE_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন রিচার্জ {MIN_RECHARGE_AMOUNT} টাকা।")
-            return
-        data[user_id]['recharge_history'].append(amount)
-        save_data(data)
-        try:
-            bot.send_message(ADMIN_CHAT_ID, f"নতুন রিচার্জ রিকোয়েস্ট: ইউজার {user_id}, পরিমাণ: {amount} টাকা")
-            bot.send_message(message.chat.id, f"✅ আপনার {amount} টাকা রিচার্জ রিকোয়েস্ট পাঠানো হয়েছে। স্ক্রিনশট পাঠান।")
-        except Exception as e:
-            bot.send_message(message.chat.id, "⚠️ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
-            print(f"রিচার্জ ত্রুটি: {e}")
-
-    elif text == 'ট্রানজ্যাকশন হিস্ট্রি':
-        user = data[user_id]
-        withdraws = user.get('withdraw_history', [])
-        recharges = user.get('recharge_history', [])
-        history_text = "📜 ট্রানজ্যাকশন হিস্ট্রি:\n\n"
-        history_text += "উইথড্র:\n" + "\n".join([f"- {amt} টাকা" for amt in withdraws]) + "\n\n" if withdraws else "উইথড্র: কোনো রেকর্ড নেই\n\n"
-        history_text += "রিচার্জ:\n" + "\n".join([f"- {amt} টাকা" for amt in recharges]) if recharges else "রিচার্জ: কোনো রেকর্ড নেই"
-        bot.send_message(message.chat.id, history_text, reply_markup=main_menu_keyboard())
-
-    elif text == 'যোগাযোগ':
-        bot.send_message(message.chat.id, "আপনি যোগাযোগ করতে পারেন @setusername00_00_is_available", reply_markup=main_menu_keyboard())
-
+        bot.reply_to(message, f"✅ User {target_id} deleted.")
     else:
-        bot.send_message(message.chat.id, "⚠️ বুঝতে পারিনি, দয়া করে নিচের বাটন থেকে অপশন বেছে নিন।", reply_markup=main_menu_keyboard())
+        bot.reply_to(message, "❌ User not found.")
 
-if __name__ == '__main__':
+def run_bot():
     bot.remove_webhook()
     bot.polling(none_stop=True)
+
+if __name__ == '__main__':
+    # বটকে আলাদা থ্রেডে চালানো
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.start()
+    # Flask সার্ভার চালানো
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
