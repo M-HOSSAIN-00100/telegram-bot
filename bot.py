@@ -7,12 +7,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask
 import threading
 
+# Flask সার্ভার তৈরি
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Telegram Bot is running!"
 
+# এনভায়রনমেন্ট ভ্যারিয়েবল লোড
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_CHAT_ID = int(os.getenv('ADMIN_CHAT_ID'))
@@ -24,6 +26,7 @@ PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
 GROUP_LINK = os.getenv('GROUP_LINK')
 GOOGLE_CREDENTIALS = os.getenv('GOOGLE_CREDENTIALS')
 
+# Google Sheets সেটআপ
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = json.loads(GOOGLE_CREDENTIALS)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -205,7 +208,7 @@ def main_handler(message):
         profile_text = (
             f"👤 ইউজার: @{user.get('username', 'নাম নেই')}\n"
             f"💰 ব্যালেন্স: {user.get('balance', 0)} টাকা\n"
-            f"🔗 রেফারার: @{data.get(str(user.get('ref')), {}).get('username', 'না আছে')}\n"
+            f"🔗 রেফারার: @{data.get(str(user.get('ref', '')), {}).get('username', 'না আছে')}\n"
             f"🔓 এক্টিভেটেড: {'হ্যাঁ' if user.get('activated') else 'না'}"
         )
         bot.send_message(message.chat.id, profile_text, reply_markup=main_menu_keyboard())
@@ -224,8 +227,8 @@ def main_handler(message):
             bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"আপনার বর্তমান ব্যালেন্স: {data[user_id]['balance']} টাকা।\n"
-                                          f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
-                                          "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
+                                         f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
+                                         "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/withdraw_amount'):
         if not is_user_activated(user_id):
@@ -257,8 +260,8 @@ def main_handler(message):
             bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"রিচার্জ করতে /recharge_amount <টাকা> লিখুন।\n"
-                                          f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
-                                          f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
+                                         f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
+                                         f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/recharge_amount'):
         if not is_user_activated(user_id):
@@ -301,7 +304,9 @@ def run_bot():
     bot.polling(none_stop=True)
 
 if __name__ == '__main__':
+    # বটকে আলাদা থ্রেডে চালানো
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.start()
+    # Flask সার্ভার চালানো
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
