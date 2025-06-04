@@ -28,11 +28,14 @@ try:
     PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
     GROUP_LINK = os.getenv('GROUP_LINK')
     GOOGLE_CREDENTIALS = os.getenv('GOOGLE_CREDENTIALS')
+    if not TOKEN or not GOOGLE_CREDENTIALS:
+        raise ValueError("Missing BOT_TOKEN or GOOGLE_CREDENTIALS")
     logger.info("Environment variables loaded successfully")
 except Exception as e:
     logger.error(f"Error loading environment variables: {e}")
     raise
 
+# কনস্ট্যান্টস
 ACTIVATION_FEE = 50
 REFERRAL_REWARD = 20
 MIN_WITHDRAW_AMOUNT = 50
@@ -149,9 +152,9 @@ def handle_start(message):
             "আপনি এখন একটি রিয়েল ইনকাম সিস্টেমে আছেন, যেখানে শুধু রেফার করেই আয় করতে পারবেন।\n\n"
             f"✅ প্রতি এক্টিভ রেফারে পাবেন {REFERRAL_REWARD} টাকা।\n\n"
             "📌 আমাদের সিস্টেম ১০০% বিশ্বাসযোগ্য, স্ক্যাম নয়।\n\n"
-            f"🔓 একাউন্ট এক্টিভ করতে মাত্র {ACTIVATION_FEE} টাকা বিকাশ/নগদ করুন:\n"
+            f"🔓 একাউন্ট একটিভ করতে মাত্র {ACTIVATION_FEE} টাকা বিকাশ/নগদ করুন:\n"
             f"📲 নাম্বার: {PAYMENT_NUMBER}\n\n"
-            "📩 স্ক্রিনশট পাঠিয়ে এক্টিভেশন নিশ্চিত করুন।\n\n"
+            "📩 স্ক্রিনশট পাঠিয়ে একটিভেশন নিশ্চিত করুন।\n\n"
             "🚀 শুরু করুন, বড় ইনকামের পথে!"
         )
         bot.send_message(message.chat.id, welcome_message, reply_markup=markup)
@@ -162,7 +165,7 @@ def handle_screenshot(message):
     username = message.from_user.username or 'নাম নেই'
     logger.info(f"Received screenshot from user {user_id}")
     if is_user_activated(user_id):
-        bot.reply_to(message, "✅ ইতিমধ্যে এক্টিভ।")
+        bot.reply_to(message, "✅ ইতিমধ্যে একটিভ।")
         return
     try:
         bot.forward_message(ADMIN_CHAT_ID, message.chat.id, message.message_id)
@@ -193,8 +196,8 @@ def approve_user(message):
         return
     activate_user(target_id)
     try:
-        bot.send_message(int(target_id), "✅ আপনার একাউন্ট অ্যাডমিন দ্বারা এক্টিভ করা হয়েছে।", reply_markup=main_menu_keyboard())
-        bot.reply_to(message, f"✅ {target_id} এক্টিভেট করা হয়েছে।")
+        bot.send_message(int(target_id), "✅ আপনার একাউন্ট অ্যাডমিন দ্বারা একটিভ করা হয়েছে।", reply_markup=main_menu_keyboard())
+        bot.reply_to(message, f"✅ {target_id} একটিভেট করা হয়েছে।")
         logger.info(f"User {target_id} activated by admin")
     except Exception as e:
         bot.reply_to(message, f"⚠️ {target_id}-কে মেসেজ পাঠাতে ত্রুটি: {e}")
@@ -237,7 +240,7 @@ def main_handler(message):
             f"👤 ইউজার: @{user.get('username', 'নাম নেই')}\n"
             f"💰 ব্যালেন্স: {user.get('balance', 0)} টাকা\n"
             f"🔗 রেফারার: @{data.get(str(user.get('ref', '')), {}).get('username', 'না আছে')}\n"
-            f"🔓 এক্টিভেটেড: {'হ্যাঁ' if user.get('activated') else 'না'}"
+            f"🔓 একটিভেটেড: {'হ্যাঁ' if user.get('activated') else 'না'}"
         )
         bot.send_message(message.chat.id, profile_text, reply_markup=main_menu_keyboard())
 
@@ -246,21 +249,22 @@ def main_handler(message):
             bot_username = bot.get_me().username
             ref_link = f"https://t.me/{bot_username}?start={user_id}"
             bot.send_message(message.chat.id, f"আপনার রেফার লিংক:\n{ref_link}", reply_markup=main_menu_keyboard())
+            logger.info(f"Referral link sent to user {user_id}")
         except Exception as e:
             bot.send_message(message.chat.id, "⚠️ রেফার লিংক তৈরি করতে ত্রুটি।", reply_markup=main_menu_keyboard())
             logger.error(f"রেফার লিংক ত্রুটি: {e}")
 
     elif text == 'উইথড্র':
         if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
+            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"আপনার বর্তমান ব্যালেন্স: {data[user_id]['balance']} টাকা।\n"
-                                         f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
-                                         "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
+                            f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
+                            "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/withdraw_amount'):
         if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
+            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():
@@ -268,7 +272,7 @@ def main_handler(message):
             return
         amount = int(parts[1])
         if amount < MIN_WITHDRAW_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন উইথড্র {MIN_WITHDRAW_AMOUNT} টাকা।")
+            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।")
             return
         if data[user_id]['balance'] < amount:
             bot.send_message(message.chat.id, "⚠️ আপনার ব্যালেন্স পর্যাপ্ত নয়।")
@@ -286,15 +290,15 @@ def main_handler(message):
 
     elif text == 'রিচার্জ':
         if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
+            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"রিচার্জ করতে /recharge_amount <টাকা> লিখুন।\n"
-                                         f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
-                                         f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
+                            f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
+                            f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/recharge_amount'):
         if not is_user_activated(user_id):
-            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট এক্টিভ নয়। এক্টিভেশন করুন।")
+            bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():
@@ -302,17 +306,17 @@ def main_handler(message):
             return
         amount = int(parts[1])
         if amount < MIN_RECHARGE_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন রিচার্জ {MIN_RECHARGE_AMOUNT} টাকা।")
+            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।")
             return
         data[user_id]['recharge_history'].append(amount)
         save_data(data)
         try:
             bot.send_message(ADMIN_CHAT_ID, f"নতুন রিচার্জ রিকোয়েস্ট: ইউজার {user_id}, পরিমাণ: {amount} টাকা")
-            bot.send_message(message.chat.id, f"✅ আপনার {amount} টাকা রিচার্জ রিকোয়েস্ট পাঠানো হয়েছে। স্ক্রিনশট পাঠান।")
+            bot.send_message(message.chat.id, f"✅ {amount} টাকা রিচার্জ রিকোয়েস্ট পাঠানো হয়েছে। স্ক্রিনশট পাঠান।")
             logger.info(f"Recharge request processed for user {user_id}, amount: {amount}")
         except Exception as e:
-            bot.send_message(message.chat.id, "⚠️ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
-            logger.error(f"রিচার্জ ত্রুটি: {e}")
+            bot.send_message(message, "⚠️⚡ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুনি।")
+            logger.error(f"Recharge error: {e}")
 
     elif text == 'ট্রানজ্যাকশন হিস্ট্রি':
         user = data[user_id]
@@ -345,7 +349,7 @@ if __name__ == '__main__':
         bot_thread.start()
         logger.info("Starting Flask server")
         port = int(os.getenv('PORT', 8080))
-        app.run(host='0.0.0.0', port=port)
+        app.run(host='0.0',.0.0', port=port)
     except Exception as e:
         logger.error(f"Main execution error: {e}")
         raise
