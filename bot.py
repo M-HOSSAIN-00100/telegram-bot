@@ -259,8 +259,8 @@ def main_handler(message):
             bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"আপনার বর্তমান ব্যালেন্স: {data[user_id]['balance']} টাকা।\n"
-                            f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
-                            "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
+                                         f"সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।\n"
+                                         "উইথড্র করতে /withdraw_amount <টাকা> লিখুন।", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/withdraw_amount'):
         if not is_user_activated(user_id):
@@ -272,7 +272,7 @@ def main_handler(message):
             return
         amount = int(parts[1])
         if amount < MIN_WITHDRAW_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন উইথড্র: {MIN_WITHDRAW_AMOUNT} টাকা।")
+            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন উইথড্র {MIN_WITHDRAW_AMOUNT} টাকা।")
             return
         if data[user_id]['balance'] < amount:
             bot.send_message(message.chat.id, "⚠️ আপনার ব্যালেন্স পর্যাপ্ত নয়।")
@@ -293,8 +293,8 @@ def main_handler(message):
             bot.send_message(message.chat.id, "❌ আপনার একাউন্ট একটিভ নয়। একটিভেশন করুন।")
             return
         bot.send_message(message.chat.id, f"রিচার্জ করতে /recharge_amount <টাকা> লিখুন।\n"
-                            f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
-                            f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
+                                         f"সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।\n"
+                                         f"পেমেন্ট নাম্বার: {PAYMENT_NUMBER}", reply_markup=main_menu_keyboard())
 
     elif text.startswith('/recharge_amount'):
         if not is_user_activated(user_id):
@@ -306,7 +306,7 @@ def main_handler(message):
             return
         amount = int(parts[1])
         if amount < MIN_RECHARGE_AMOUNT:
-            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন রিচার্জ: {MIN_RECHARGE_AMOUNT} টাকা।")
+            bot.send_message(message.chat.id, f"⚠️ সর্বনিম্ন রিচার্জ {MIN_RECHARGE_AMOUNT} টাকা।")
             return
         data[user_id]['recharge_history'].append(amount)
         save_data(data)
@@ -315,8 +315,8 @@ def main_handler(message):
             bot.send_message(message.chat.id, f"✅ {amount} টাকা রিচার্জ রিকোয়েস্ট পাঠানো হয়েছে। স্ক্রিনশট পাঠান।")
             logger.info(f"Recharge request processed for user {user_id}, amount: {amount}")
         except Exception as e:
-            bot.send_message(message, "⚠️⚡ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুনি।")
-            logger.error(f"Recharge error: {e}")
+            bot.send_message(message.chat.id, "⚠️ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
+            logger.error(f"রিচার্জ ত্রুটি: {e}")
 
     elif text == 'ট্রানজ্যাকশন হিস্ট্রি':
         user = data[user_id]
@@ -349,7 +349,7 @@ if __name__ == '__main__':
         bot_thread.start()
         logger.info("Starting Flask server")
         port = int(os.getenv('PORT', 8080))
-        app.run(host='0.0',.0.0', port=port)
+        app.run(host='0.0.0.0', port=port)
     except Exception as e:
         logger.error(f"Main execution error: {e}")
         raise
