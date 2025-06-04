@@ -1,7 +1,7 @@
 import telebot
-import json
 import os
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # এনভায়রনমেন্ট ভ্যারিয়েবল লোড
 load_dotenv()
@@ -13,24 +13,26 @@ MIN_WITHDRAW_AMOUNT = 50
 MIN_RECHARGE_AMOUNT = 20
 PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
 GROUP_LINK = os.getenv('GROUP_LINK')
-DATA_FILE = 'users.json'
+MONGO_URI = os.getenv('MONGO_URI')
+
+# MongoDB সংযোগ
+client = MongoClient(MONGO_URI)
+db = client['telegram_bot']
+collection = db['users']
 
 bot = telebot.TeleBot(TOKEN)
 
 def load_data():
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
-                return json.load(f)
-        return {}
+        return {doc['_id']: doc for doc in collection.find()}
     except Exception as e:
         print(f"ডেটা লোড করতে ত্রুটি: {e}")
         return {}
 
 def save_data(data):
     try:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
+        for user_id, user_data in data.items():
+            collection.update_one({'_id': user_id}, {'$set': user_data}, upsert=True)
     except Exception as e:
         print(f"ডেটা সেভ করতে ত্রুটি: {e}")
 
@@ -141,8 +143,7 @@ def remove_user(message):
     target_id = args[1]
     data = load_data()
     if target_id in data:
-        del data[target_id]
-        save_data(data)
+        collection.delete_one({'_id': target_id})
         bot.reply_to(message, f"✅ ইউজার {target_id} ডিলিট করা হয়েছে।")
     else:
         bot.reply_to(message, "❌ ইউজার পাওয়া যায়নি।")
