@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 4 -b 1.0.0.0:$PORT bot:app
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT bot:app
     envVars:
       - key: BOT_TOKEN
         sync: false
