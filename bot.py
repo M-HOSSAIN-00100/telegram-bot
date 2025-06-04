@@ -6,32 +6,49 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask
 import threading
+import logging
+
+# লগিং সেটআপ
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Flask সার্ভার তৈরি
 app = Flask(__name__)
 
 @app.route('/')
 def home():
+    logger.info("Flask server accessed at /")
     return "Telegram Bot is running!"
 
 # এনভায়রনমেন্ট ভ্যারিয়েবল লোড
 load_dotenv()
-TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_CHAT_ID = int(os.getenv('ADMIN_CHAT_ID'))
+try:
+    TOKEN = os.getenv('BOT_TOKEN')
+    ADMIN_CHAT_ID = int(os.getenv('ADMIN_CHAT_ID'))
+    PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
+    GROUP_LINK = os.getenv('GROUP_LINK')
+    GOOGLE_CREDENTIALS = os.getenv('GOOGLE_CREDENTIALS')
+    logger.info("Environment variables loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading environment variables: {e}")
+    raise
+
 ACTIVATION_FEE = 50
 REFERRAL_REWARD = 20
 MIN_WITHDRAW_AMOUNT = 50
 MIN_RECHARGE_AMOUNT = 20
-PAYMENT_NUMBER = os.getenv('PAYMENT_NUMBER')
-GROUP_LINK = os.getenv('GROUP_LINK')
-GOOGLE_CREDENTIALS = os.getenv('GOOGLE_CREDENTIALS')
 
 # Google Sheets সেটআপ
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(GOOGLE_CREDENTIALS)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open("TelegramBotUsers").sheet1
+try:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_dict = json.loads(GOOGLE_CREDENTIALS)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("TelegramBotUsers").sheet1
+    logger.info("Google Sheets connection established")
+except Exception as e:
+    logger.error(f"Error setting up Google Sheets: {e}")
+    raise
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -49,9 +66,10 @@ def load_data():
                 'withdraw_history': json.loads(record['withdraw_history']) if record['withdraw_history'] else [],
                 'recharge_history': json.loads(record['recharge_history']) if record['recharge_history'] else []
             }
+        logger.info("Data loaded from Google Sheets")
         return data
     except Exception as e:
-        print(f"ডেটা লোড করতে ত্রুটি: {e}")
+        logger.error(f"ডেটা লোড করতে ত্রুটি: {e}")
         return {}
 
 def save_data(data):
@@ -70,8 +88,9 @@ def save_data(data):
                 json.dumps(user_data['recharge_history'])
             ]
             sheet.append_row(row)
+        logger.info("Data saved to Google Sheets")
     except Exception as e:
-        print(f"ডেটা সেভ করতে ত্রুটি: {e}")
+        logger.error(f"ডেটা সেভ করতে ত্রুটি: {e}")
 
 def is_user_activated(user_id):
     data = load_data()
@@ -87,8 +106,9 @@ def activate_user(user_id):
             data[str(ref)]['balance'] += REFERRAL_REWARD
             try:
                 bot.send_message(int(ref), f"🎉 অভিনন্দন! আপনার রেফার করা ইউজার এক্টিভ হয়েছে। আপনি পেয়েছেন {REFERRAL_REWARD} টাকা।")
+                logger.info(f"Referral reward sent to user {ref}")
             except Exception as e:
-                print(f"রেফারারকে মেসেজ পাঠাতে ত্রুটি: {e}")
+                logger.error(f"রেফারারকে মেসেজ পাঠাতে ত্রুটি: {e}")
         save_data(data)
 
 def main_menu_keyboard():
@@ -100,6 +120,7 @@ def main_menu_keyboard():
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
+    logger.info(f"Received /start command from user {message.chat.id}")
     user_id = str(message.chat.id)
     username = message.from_user.username or 'নাম নেই'
     args = message.text.split()
@@ -116,6 +137,7 @@ def handle_start(message):
             'recharge_history': []
         }
         save_data(data)
+        logger.info(f"New user {user_id} registered")
 
     if is_user_activated(user_id):
         bot.send_message(message.chat.id, "✅ আপনার একাউন্ট ইতিমধ্যে এক্টিভ।", reply_markup=main_menu_keyboard())
@@ -138,24 +160,25 @@ def handle_start(message):
 def handle_screenshot(message):
     user_id = str(message.chat.id)
     username = message.from_user.username or 'নাম নেই'
+    logger.info(f"Received screenshot from user {user_id}")
     if is_user_activated(user_id):
         bot.reply_to(message, "✅ ইতিমধ্যে এক্টিভ।")
         return
     try:
-        # স্ক্রিনশট ফরোয়ার্ড করা
         bot.forward_message(ADMIN_CHAT_ID, message.chat.id, message.message_id)
-        # চ্যাট আইডি এবং ইউজারনেম সহ মেসেজ পাঠানো
         bot.send_message(
             ADMIN_CHAT_ID,
             f"📸 নতুন স্ক্রিনশট পাঠানো হয়েছে:\nইউজার: @{username}\nচ্যাট আইডি: {user_id}\nঅ্যাপ্রুভ করতে: /approve {user_id}"
         )
         bot.reply_to(message, "✅ স্ক্রিনশট অ্যাডমিনের কাছে পাঠানো হয়েছে।")
+        logger.info(f"Screenshot forwarded to admin for user {user_id}")
     except Exception as e:
         bot.reply_to(message, "⚠️ স্ক্রিনশট পাঠাতে ত্রুটি। আবার চেষ্টা করুন।")
-        print(f"স্ক্রিনশট ত্রুটি: {e}")
+        logger.error(f"স্ক্রিনশট ত্রুটি: {e}")
 
 @bot.message_handler(commands=['approve'])
 def approve_user(message):
+    logger.info(f"Received /approve command from {message.chat.id}")
     if message.chat.id != ADMIN_CHAT_ID:
         bot.reply_to(message, "⚠️ শুধু অ্যাডমিন এই কমান্ড ব্যবহার করতে পারেন।")
         return
@@ -172,11 +195,14 @@ def approve_user(message):
     try:
         bot.send_message(int(target_id), "✅ আপনার একাউন্ট অ্যাডমিন দ্বারা এক্টিভ করা হয়েছে।", reply_markup=main_menu_keyboard())
         bot.reply_to(message, f"✅ {target_id} এক্টিভেট করা হয়েছে।")
+        logger.info(f"User {target_id} activated by admin")
     except Exception as e:
         bot.reply_to(message, f"⚠️ {target_id}-কে মেসেজ পাঠাতে ত্রুটি: {e}")
+        logger.error(f"Approve error: {e}")
 
 @bot.message_handler(commands=['remove'])
 def remove_user(message):
+    logger.info(f"Received /remove command from {message.chat.id}")
     if message.chat.id != ADMIN_CHAT_ID:
         bot.reply_to(message, "⚠️ শুধু অ্যাডমিন এই কমান্ড ব্যবহার করতে পারেন।")
         return
@@ -190,6 +216,7 @@ def remove_user(message):
         del data[target_id]
         save_data(data)
         bot.reply_to(message, f"✅ ইউজার {target_id} ডিলিট করা হয়েছে।")
+        logger.info(f"User {target_id} removed by admin")
     else:
         bot.reply_to(message, "❌ ইউজার পাওয়া যায়নি।")
 
@@ -197,6 +224,7 @@ def remove_user(message):
 def main_handler(message):
     user_id = str(message.chat.id)
     text = message.text
+    logger.info(f"Received message '{text}' from user {user_id}")
 
     data = load_data()
     if user_id not in data:
@@ -220,7 +248,7 @@ def main_handler(message):
             bot.send_message(message.chat.id, f"আপনার রেফার লিংক:\n{ref_link}", reply_markup=main_menu_keyboard())
         except Exception as e:
             bot.send_message(message.chat.id, "⚠️ রেফার লিংক তৈরি করতে ত্রুটি।", reply_markup=main_menu_keyboard())
-            print(f"রেফার লিংক ত্রুটি: {e}")
+            logger.error(f"রেফার লিংক ত্রুটি: {e}")
 
     elif text == 'উইথড্র':
         if not is_user_activated(user_id):
@@ -251,9 +279,10 @@ def main_handler(message):
         try:
             bot.send_message(ADMIN_CHAT_ID, f"নতুন উইথড্র রিকোয়েস্ট: ইউজার {user_id}, পরিমাণ: {amount} টাকা")
             bot.send_message(message.chat.id, f"✅ আপনি {amount} টাকা উইথড্র রিকোয়েস্ট করেছেন। অ্যাডমিন যোগাযোগ করবে।")
+            logger.info(f"Withdraw request processed for user {user_id}, amount: {amount}")
         except Exception as e:
             bot.send_message(message.chat.id, "⚠️ উইথড্র রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
-            print(f"উইথড্র ত্রুটি: {e}")
+            logger.error(f"উইথড্র ত্রুটি: {e}")
 
     elif text == 'রিচার্জ':
         if not is_user_activated(user_id):
@@ -280,9 +309,10 @@ def main_handler(message):
         try:
             bot.send_message(ADMIN_CHAT_ID, f"নতুন রিচার্জ রিকোয়েস্ট: ইউজার {user_id}, পরিমাণ: {amount} টাকা")
             bot.send_message(message.chat.id, f"✅ আপনার {amount} টাকা রিচার্জ রিকোয়েস্ট পাঠানো হয়েছে। স্ক্রিনশট পাঠান।")
+            logger.info(f"Recharge request processed for user {user_id}, amount: {amount}")
         except Exception as e:
             bot.send_message(message.chat.id, "⚠️ রিচার্জ রিকোয়েস্ট প্রসেসে ত্রুটি। আবার চেষ্টা করুন।")
-            print(f"রিচার্জ ত্রুটি: {e}")
+            logger.error(f"রিচার্জ ত্রুটি: {e}")
 
     elif text == 'ট্রানজ্যাকশন হিস্ট্রি':
         user = data[user_id]
@@ -300,13 +330,22 @@ def main_handler(message):
         bot.send_message(message.chat.id, "⚠️ বুঝতে পারিনি, দয়া করে নিচের বাটন থেকে অপশন বেছে নিন।", reply_markup=main_menu_keyboard())
 
 def run_bot():
-    bot.remove_webhook()
-    bot.polling(none_stop=True)
+    try:
+        logger.info("Starting bot polling")
+        bot.remove_webhook()
+        bot.polling(none_stop=True)
+    except Exception as e:
+        logger.error(f"Bot polling error: {e}")
+        raise
 
 if __name__ == '__main__':
-    # বটকে আলাদা থ্রেডে চালানো
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.start()
-    # Flask সার্ভার চালানো
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    try:
+        logger.info("Starting bot thread")
+        bot_thread = threading.Thread(target=run_bot)
+        bot_thread.start()
+        logger.info("Starting Flask server")
+        port = int(os.getenv('PORT', 8080))
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        logger.error(f"Main execution error: {e}")
+        raise
